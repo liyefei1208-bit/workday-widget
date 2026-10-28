@@ -123,9 +123,23 @@ Xcode，或设置 `DEVELOPER_DIR` 指向一个可用的 Xcode。
 
 - 显示/隐藏桌面组件
 - 显示/隐藏灵动岛
+- 测试提醒
 - 工作时间统计…（⌘T）
 - 设置…（⌘,）
 - 退出工作日
+
+## 到点提醒
+
+午休、晚餐、下班的时刻，灵动岛会自动展开显示一条提醒。
+
+- **收起方式**：在提醒上向上拖（上滑）、点击，或 3 秒后自动收起。
+- **内容可改**：每档提醒都可以改时间、标题和正文，也能整体关闭。
+- **跟随排班**：内置的三档默认跟着排班时间走，改了上班 / 午休 / 晚餐时间会同步；
+  取消勾选后可以钉一个固定时间。
+- **自定义提醒**：可以再加任意多条，各自独立的时间与文案。
+- 只在工作日触发；灵动岛关闭时提醒不会弹出（设置里会有提示）。
+
+菜单栏的 **测试提醒** 可以立刻弹一条，方便看效果。
 
 ## 工时记录与统计
 
@@ -168,6 +182,7 @@ App 启动、从睡眠唤醒、以及每分钟的时钟 tick 都会触发一次�
 - 是否启用午休，以及午休起止时间
 - 是否启用晚餐休息，以及起止时间
 - 是否显示桌面组件 / 灵动岛
+- 到点提醒：总开关，以及每档提醒的时间 / 标题 / 正文
 - 登录时自动启动（工时记录需要 App 常驻）
 
 时间类设置通过 `UserDefaults` 持久化，修改后立即生效。
@@ -201,6 +216,12 @@ App 启动、从睡眠唤醒、以及每分钟的时钟 tick 都会触发一次�
 
 # 渲染统计界面预览图
 ./WorkdayWidget.app/Contents/MacOS/WorkdayWidget --render-stats preview/stats.png
+
+# 校验提醒的触发规则（跟随排班、每日一次、周末、开关）
+./WorkdayWidget.app/Contents/MacOS/WorkdayWidget --reminder-selftest
+
+# 渲染提醒卡片（lunch / dinner / workEnd / custom）
+./WorkdayWidget.app/Contents/MacOS/WorkdayWidget --render out.png --island --reminder lunch
 ```
 
 调试参数：
@@ -214,6 +235,9 @@ App 启动、从睡眠唤醒、以及每分钟的时钟 tick 都会触发一次�
 
 # 启动时固定展开灵动岛
 ./WorkdayWidget.app/Contents/MacOS/WorkdayWidget --expand-island
+
+# 启动时立刻弹一条提醒
+./WorkdayWidget.app/Contents/MacOS/WorkdayWidget --show-reminder lunch
 ```
 
 ### 项目结构
@@ -229,6 +253,8 @@ workday-widget/
 │   ├── IslandView.swift      # 灵动岛形状、刘海度量、展开状态
 │   ├── SettingsView.swift    # 设置面板（含「关于」作者信息）
 │   ├── AppIconView.swift     # 应用图标 artwork
+│   ├── Reminders.swift       # 到点提醒：数据、触发规则、持久化
+│   ├── RemindersSettingsView.swift  # 提醒设置界面
 │   ├── WorkLog.swift         # 工时记录：锁屏监听、结算、JSON 存储
 │   ├── StatsView.swift       # 工作时间统计界面
 │   ├── LaunchAtLogin.swift   # 登录项注册
@@ -248,7 +274,7 @@ workday-widget/
 - 应用图标：`Sources/AppIconView.swift` 渲染，构建时生成 `AppIcon.icns`。
 - 桌面组件底部水印：`yefei.li`（低对比度，不干扰读数）。
 - 设置面板「关于」：应用图标、版本号、作者 `yefei.li`、版权行。
-- 菜单栏菜单底部：`工作日 1.0.0 · 作者 yefei.li`（不可点击）。
+- 菜单栏菜单底部：`工作日 1.1.0 · 作者 yefei.li`（不可点击）。
 - `Info.plist`：`NSHumanReadableCopyright = © 2026 yefei.li`。
 
 ## 说明

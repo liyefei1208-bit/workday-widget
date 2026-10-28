@@ -92,6 +92,7 @@ final class IslandHoverTracker {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model = WorkdayModel()
     let workLog = WorkLog()
+    let reminders = ReminderCenter()
     let islandState = IslandState()
 
     private enum Layout {
@@ -111,6 +112,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var tickTimer: Timer?
     private var lastReconciledMinute = -1
+    private var reminderDismissTimer: Timer?
+    private var reminderScrollMonitor: Any?
+    private var reminderScrollAccum: CGFloat = 0
     private var cancellables = Set<AnyCancellable>()
     private var notificationTokens: [NSObjectProtocol] = []
 
@@ -150,6 +154,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         registerNotifications()
         startTicking()
         startWorkLog()
+        setupReminders()
+
+        if let index = CommandLine.arguments.firstIndex(of: "--show-reminder") {
+            let name = index + 1 < CommandLine.arguments.count
+                ? CommandLine.arguments[index + 1]
+                : "lunch"
+            let kind = ReminderKind(rawValue: name) ?? .lunch
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.islandState.showReminder(Reminder.sample(for: kind))
+            }
+        }
 
         if CommandLine.arguments.contains("--show-stats") {
             DispatchQueue.main.async { [weak self] in
@@ -172,6 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         tickTimer?.invalidate()
+        reminderDismissTimer?.invalidate()
+        stopReminderScrollMonitor()
         islandHover.stop()
         workLog.stopObserving()
         let center = NotificationCenter.default
@@ -396,6 +413,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self?.handleIslandExpansion(expanded)
             }
             .store(in: &cancellables)
+
+        islandState.$reminder
+            .receive(on: RunLoop.main)
+            .sink { [weak self] reminder in
+                self?.handleReminderChange(reminder)
+            }
+            .store(in: &cancellables)
     }
 
     private func applyVisibility(_ settings: WorkdaySettings) {
@@ -422,14 +446,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.model.now = Date()
+            let now = Date()
+            self.model.now = now
             self.updateStatusItem()
             self.reconcileWorkLogIfNeeded()
+            // Reminders only act on the exact minute, so evaluating every tick
+            // costs a few comparisons and catches the minute it starts.
+            self.reminders.evaluate(now: now, settings: self.model.settings)
         }
         RunLoop.main.add(timer, forMode: .common)
         tickTimer = timer
 
         updateStatusItem()
+    }
+
+    // MARK: - Reminders
+
+    private func setupReminders() {
+        reminders.prune()
+        reminders.onFire = { [weak self] reminder in
+            guard let self else { return }
+            // The island is the only surface a reminder can appear on. If the
+            // user has turned the island off, the reminder is skipped rather
+            // than lighting the panel up behind their back.
+            guard self.model.settings.showIsland else { return }
+            self.islandState.showReminder(reminder)
+        }
+    }
+
+    private func handleReminderChange(_ reminder: Reminder?) {
+        reminderDismissTimer?.invalidate()
+        reminderDismissTimer = nil
+        reminderScrollAccum = 0
+
+        if reminder != nil {
+            let timer = Timer(
+                timeInterval: ReminderCenter.autoDismissAfter,
+                repeats: false
+            ) { [weak self] _ in
+                self?.islandState.dismissReminder()
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            reminderDismissTimer = timer
+            startReminderScrollMonitor()
+        } else {
+            stopReminderScrollMonitor()
+        }
+    }
+
+    /// Two-finger swipe up over the island dismisses a reminder. The drag
+    /// gesture inside the island handles a click-drag; this covers the trackpad
+    /// gesture, which arrives as a scroll event rather than a drag.
+    private func startReminderScrollMonitor() {
+        guard reminderScrollMonitor == nil else { return }
+
+        reminderScrollMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            guard let self, self.islandState.reminder != nil else { return event }
+
+            // Normalise for the "natural scrolling" preference so that moving
+            // two fingers toward the top of the trackpad always counts.
+            let upward = event.isDirectionInvertedFromDevice
+                ? event.scrollingDeltaY < 0
+                : event.scrollingDeltaY > 0
+            let amount = abs(event.scrollingDeltaY)
+            self.reminderScrollAccum += upward ? amount : -amount
+
+            if self.reminderScrollAccum > 40 {
+                self.reminderScrollAccum = 0
+                self.islandState.dismissReminder()
+            }
+            return event
+        }
+    }
+
+    private func stopReminderScrollMonitor() {
+        if let monitor = reminderScrollMonitor {
+            NSEvent.removeMonitor(monitor)
+            reminderScrollMonitor = nil
+        }
     }
 
     // MARK: - Work log
@@ -483,6 +579,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(islandItem)
 
         menu.addItem(.separator())
+
+        let testReminderItem = NSMenuItem(
+            title: "测试提醒",
+            action: #selector(testReminder),
+            keyEquivalent: ""
+        )
+        testReminderItem.target = self
+        menu.addItem(testReminderItem)
 
         let statsItem = NSMenuItem(
             title: "工作时间统计…",
@@ -593,7 +697,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             window.title = "工作日设置"
             window.isReleasedWhenClosed = false
             window.contentView = makeHostingContainer(
-                rootView: SettingsView(model: model),
+                rootView: SettingsView(model: model, reminders: reminders),
                 size: NSSize(width: 420, height: 740)
             )
             window.center()
@@ -702,6 +806,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openStats() {
         showStatsWindow()
+    }
+
+    /// Fires a reminder on demand so the look and the dismissal gesture can be
+    /// checked without waiting for an actual break time.
+    @objc private func testReminder() {
+        guard model.settings.showIsland else {
+            NSSound.beep()
+            return
+        }
+
+        let sample = reminders.config.reminders.first { $0.enabled }
+            ?? Reminder.defaults.first { $0.kind == .lunch }
+            ?? Reminder(kind: .lunch, title: "午休时间到", message: "去吃点东西吧")
+
+        islandState.showReminder(sample)
     }
 
     @objc private func quitApp() {

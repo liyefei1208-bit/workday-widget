@@ -91,5 +91,6 @@ if [[ "$WANT_PREVIEW" == "1" ]]; then
   "$APP/Contents/MacOS/$APP_NAME" --render "$ROOT/preview/widget.png"
   "$APP/Contents/MacOS/$APP_NAME" --render "$ROOT/preview/island.png" --island
   "$APP/Contents/MacOS/$APP_NAME" --render-stats "$ROOT/preview/stats.png"
+  "$APP/Contents/MacOS/$APP_NAME" --render "$ROOT/preview/reminder.png" --at 12:00 --island --reminder lunch
   echo "==> 预览图已生成: $ROOT/preview/"
 fi

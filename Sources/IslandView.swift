@@ -172,9 +172,14 @@ struct NotchIslandShape: Shape {
 // MARK: - State
 
 /// Expansion / pin state for the island.
+///
+/// Three things can hold the island open: the pointer hovering it, a manual
+/// pin, and a reminder that is currently being shown.
 final class IslandState: ObservableObject {
     @Published private(set) var isHovering = false
     @Published private(set) var isPinned = false
+    /// The reminder currently on display, if any. Non-nil forces expansion.
+    @Published private(set) var reminder: Reminder?
     @Published private(set) var expanded = false
 
     func setHovering(_ value: Bool) {
@@ -194,8 +199,21 @@ final class IslandState: ObservableObject {
         refresh()
     }
 
+    // MARK: Reminders
+
+    func showReminder(_ reminder: Reminder) {
+        self.reminder = reminder
+        refresh()
+    }
+
+    func dismissReminder() {
+        guard reminder != nil else { return }
+        reminder = nil
+        refresh()
+    }
+
     private func refresh() {
-        let next = isPinned || isHovering
+        let next = isPinned || isHovering || reminder != nil
         if next != expanded { expanded = next }
     }
 }
@@ -285,7 +303,23 @@ struct IslandView: View {
         )
         .animation(animation, value: expanded)
         .contentShape(shape)
-        .onTapGesture { state.togglePinned() }
+        .onTapGesture {
+            // While a reminder is up, a click dismisses it rather than pinning.
+            if state.reminder != nil {
+                state.dismissReminder()
+            } else {
+                state.togglePinned()
+            }
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12)
+                .onEnded { value in
+                    guard state.reminder != nil else { return }
+                    if value.translation.height < -20 {
+                        state.dismissReminder()
+                    }
+                }
+        )
         .contextMenu {
             Button(state.isPinned ? "取消固定" : "固定展开") { state.togglePinned() }
             Button("设置…") {
@@ -299,11 +333,7 @@ struct IslandView: View {
         }
         .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            snap.isWorkday
-                ? "工作日已完成 \(snap.percentOverall)%"
-                : "今天是休息日"
-        )
+        .accessibilityLabel(accessibilityText(snap))
     }
 
     // MARK: Top band (level with the notch / menu bar)
@@ -394,7 +424,9 @@ struct IslandView: View {
 
     private func detailContent(_ snap: DaySnapshot) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            if snap.isWorkday {
+            if let reminder = state.reminder {
+                reminderContent(reminder, snap: snap)
+            } else if snap.isWorkday {
                 HStack(alignment: .center, spacing: 14) {
                     ZStack {
                         ProgressRing(
@@ -472,6 +504,48 @@ struct IslandView: View {
         )
     }
 
+    /// Reminder card, shown instead of the progress detail while a reminder is
+    /// on screen. Same geometry as the normal detail so the island animation
+    /// does not change shape.
+    private func reminderContent(_ reminder: Reminder, snap: DaySnapshot) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(reminder.kind.tint.opacity(0.18))
+                Image(systemName: reminder.kind.icon)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(reminder.kind.tint)
+            }
+            .frame(width: 52, height: 52)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(reminder.title)
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+
+                if !reminder.message.isEmpty {
+                    Text(reminder.message)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 8, weight: .bold))
+                    Text("上滑收起")
+                        .font(.system(size: 9.5, weight: .medium))
+                }
+                .foregroundStyle(.white.opacity(0.28))
+                .padding(.top, 3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
     private func segmentRow(
         icon: String,
         title: String,
@@ -543,6 +617,15 @@ struct IslandView: View {
     }
 
     // MARK: Copy
+
+    private func accessibilityText(_ snap: DaySnapshot) -> String {
+        if let reminder = state.reminder {
+            return "\(reminder.title)。\(reminder.message)。上滑收起"
+        }
+        return snap.isWorkday
+            ? "工作日已完成 \(snap.percentOverall)%"
+            : "今天是休息日"
+    }
 
     private func detailText(_ snap: DaySnapshot) -> String {
         switch snap.phase {

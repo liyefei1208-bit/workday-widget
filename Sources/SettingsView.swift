@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var model: WorkdayModel
+    @ObservedObject var reminders: ReminderCenter
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var launchError: String?
@@ -34,6 +35,8 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            RemindersSettingsView(store: reminders, model: model)
 
             Section("工时记录") {
                 Toggle("登录时自动启动", isOn: $launchAtLogin)

@@ -75,7 +75,8 @@ private func renderPreview(
     at date: Date,
     island: Bool,
     compact: Bool,
-    scheme: ColorScheme
+    scheme: ColorScheme,
+    reminder: ReminderKind? = nil
 ) {
     let model = WorkdayModel()
     model.now = date
@@ -83,7 +84,12 @@ private func renderPreview(
     let content: AnyView
     if island {
         let state = IslandState()
-        if !compact { state.setHovering(true) }
+        if let reminder {
+            // A reminder always expands; --compact would contradict it.
+            state.showReminder(Reminder.sample(for: reminder))
+        } else if !compact {
+            state.setHovering(true)
+        }
         let metrics = CommandLine.arguments.contains("--no-notch")
             ? IslandMetrics(hasNotch: false, notchWidth: 190, notchHeight: 32)
             : IslandMetrics.previewNotch
@@ -215,6 +221,103 @@ private func runLogSelfTest() -> Int32 {
     return failures == 0 ? 0 : 1
 }
 
+// MARK: - Reminder self test
+
+/// Exercises the firing rules. Uses an isolated defaults suite so the real
+/// reminder settings are untouched.
+private func runReminderSelfTest() -> Int32 {
+    var failures = 0
+
+    func check(_ name: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+        if ok {
+            print("  ok   \(name)")
+        } else {
+            let extra = detail()
+            print("  FAIL \(name)\(extra.isEmpty ? "" : " — \(extra)")")
+            failures += 1
+        }
+    }
+
+    let settings = WorkdaySettings.default
+    let lunch = Reminder.defaults[0]
+
+    print("== 时间解析 ==")
+    check("午休跟随排班 12:00", lunch.effectiveTime(settings) == 12 * 60,
+          "\(lunch.effectiveTime(settings) ?? -1)")
+
+    var pinned = Reminder(kind: .lunch, time: 13 * 60 + 30, title: "t", message: "")
+    check("显式时间覆盖排班", pinned.effectiveTime(settings) == 13 * 60 + 30)
+    pinned.time = nil
+    check("清除后回到排班", pinned.effectiveTime(settings) == 12 * 60)
+
+    var noLunch = settings
+    noLunch.lunchEnabled = false
+    check("关闭午休后无提醒时间", lunch.effectiveTime(noLunch) == nil)
+
+    check("自定义提醒无时间不触发",
+          Reminder(kind: .custom, title: "t", message: "").effectiveTime(settings) == nil)
+
+    print("== 触发规则 ==")
+    let suite = "workday.reminders.selftest"
+    UserDefaults().removePersistentDomain(forName: suite)
+    let defaults = UserDefaults(suiteName: suite)!
+
+    let center = ReminderCenter(defaults: defaults, storageKey: "selftest")
+    var fired: [ReminderKind] = []
+    center.onFire = { fired.append($0.kind) }
+
+    // 2026-10-28 is a Wednesday.
+    center.evaluate(now: makeDate(2026, 10, 28, 11, 59), settings: settings)
+    check("11:59 不触发", fired.isEmpty, "\(fired)")
+
+    center.evaluate(now: makeDate(2026, 10, 28, 12, 0), settings: settings)
+    check("12:00 触发午休", fired == [.lunch], "\(fired)")
+
+    center.evaluate(now: makeDate(2026, 10, 28, 12, 0), settings: settings)
+    check("同一分钟只触发一次", fired == [.lunch], "\(fired)")
+
+    center.evaluate(now: makeDate(2026, 10, 28, 18, 0), settings: settings)
+    check("18:00 触发晚餐", fired == [.lunch, .dinner], "\(fired)")
+
+    center.evaluate(now: makeDate(2026, 10, 28, 19, 30), settings: settings)
+    check("19:30 触发下班", fired == [.lunch, .dinner, .workEnd], "\(fired)")
+
+    center.evaluate(now: makeDate(2026, 10, 29, 12, 0), settings: settings)
+    check("次日重新触发", fired.count == 4, "\(fired)")
+
+    let countBeforeWeekend = fired.count
+    center.evaluate(now: makeDate(2026, 10, 31, 12, 0), settings: settings) // Saturday
+    check("周末不触发", fired.count == countBeforeWeekend, "\(fired)")
+
+    center.config.reminders[0].enabled = false
+    fired.removeAll()
+    center.evaluate(now: makeDate(2026, 11, 2, 12, 0), settings: settings) // Monday
+    check("关闭的提醒不触发", !fired.contains(.lunch), "\(fired)")
+
+    center.config.enabled = false
+    fired.removeAll()
+    center.evaluate(now: makeDate(2026, 11, 2, 18, 0), settings: settings)
+    check("总开关关闭后全部不触发", fired.isEmpty, "\(fired)")
+
+    print("== 持久化 ==")
+    center.config.enabled = true
+    fired.removeAll()
+    center.evaluate(now: makeDate(2026, 11, 3, 18, 0), settings: settings)
+    check("恢复后正常触发", fired == [.dinner], "\(fired)")
+
+    let reloaded = ReminderCenter(defaults: defaults, storageKey: "selftest")
+    check("触发记录已持久化", !reloaded.config.fired.isEmpty,
+          "\(reloaded.config.fired.count)")
+
+    reloaded.evaluate(now: makeDate(2026, 11, 3, 18, 0), settings: settings)
+    check("重启后同一天不重复", fired == [.dinner], "\(fired)")
+
+    UserDefaults().removePersistentDomain(forName: suite)
+
+    print(failures == 0 ? "\n全部通过" : "\n\(failures) 项失败")
+    return failures == 0 ? 0 : 1
+}
+
 // MARK: - Stats preview
 
 @MainActor
@@ -280,8 +383,14 @@ if args.contains("--help") {
                                    渲染预览图后退出
       WorkdayWidget --log-selftest  校验工时记录的结算规则，失败时返回非 0
       WorkdayWidget --log-dump      打印已记录的工时
+      WorkdayWidget --reminder-selftest
+                                    校验提醒的触发规则，失败时返回非 0
     """)
     exit(0)
+}
+
+if args.contains("--reminder-selftest") {
+    exit(runReminderSelfTest())
 }
 
 if args.contains("--log-selftest") {
@@ -367,7 +476,8 @@ if let renderPath = flagValue("--render") {
             at: date,
             island: args.contains("--island"),
             compact: args.contains("--compact"),
-            scheme: args.contains("--light") ? .light : .dark
+            scheme: args.contains("--light") ? .light : .dark,
+            reminder: flagValue("--reminder").flatMap(ReminderKind.init(rawValue:))
         )
     }
     exit(0)
