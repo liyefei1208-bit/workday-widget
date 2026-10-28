@@ -1,0 +1,7 @@
+.DS_Store
+.build/
+WorkdayWidget.app/
+build/
+dist/
+# Local tooling state, not part of the project.
+.omc/
