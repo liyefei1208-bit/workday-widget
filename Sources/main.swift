@@ -369,6 +369,57 @@ private func renderStats(path: String) {
 
 // MARK: - Entry point
 
+/// Checks the hour / minute drop-downs: the five-minute step in the minute
+/// list, and that an off-grid stored value survives being displayed.
+func runTimePickerSelfTest() -> Int32 {
+    var failures = 0
+
+    func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+        if ok {
+            print("  ok   \(label)")
+        } else {
+            failures += 1
+            print("  FAIL \(label)\(detail().isEmpty ? "" : "  (\(detail()))")")
+        }
+    }
+
+    let grid = TimeOptions.minutes(current: 0)
+    check("分钟档位 12 个（每 5 分钟）", grid == Array(stride(from: 0, to: 60, by: 5)),
+          grid.map(String.init).joined(separator: ","))
+    check("档位首项 00、末项 55", grid.first == 0 && grid.last == 55,
+          "\(grid.first ?? -1)..\(grid.last ?? -1)")
+
+    // A value on the grid must not be duplicated.
+    check("整五分钟不重复", TimeOptions.minutes(current: 30).filter { $0 == 30 }.count == 1)
+
+    // An off-grid value must be kept, in sorted position, not rounded away.
+    let offGrid = TimeOptions.minutes(current: 53)
+    check("非整五分钟保留在列表里", offGrid.contains(53), offGrid.map(String.init).joined(separator: ","))
+    check("非整五分钟仍在 12 项之外只多一项", offGrid.count == 13, "\(offGrid.count)")
+    check("非整五分钟按序插入", offGrid == offGrid.sorted(), offGrid.map(String.init).joined(separator: ","))
+
+    // The hour / minute split used by the two pickers must round-trip.
+    func split(_ minutes: Int) -> (hour: Int, minute: Int) { (minutes / 60, minutes % 60) }
+    func join(hour: Int, minute: Int) -> Int { hour * 60 + minute }
+
+    for value in [0, 570, 710, 713, 1170, 1439] {
+        let parts = split(value)
+        check("往返 \(value)", join(hour: parts.hour, minute: parts.minute) == value,
+              "\(parts.hour):\(parts.minute)")
+    }
+
+    check("09:30 拆为 9 时 30 分", split(570) == (9, 30))
+    check("19:30 拆为 19 时 30 分", split(1170) == (19, 30))
+
+    // Changing only the hour must leave the minute untouched.
+    let base = 713                       // 11:53
+    check("改小时不动分钟", join(hour: 15, minute: base % 60) == 15 * 60 + 53)
+    check("改分钟不动小时", join(hour: base / 60, minute: 5) == 11 * 60 + 5)
+
+    print(failures == 0 ? "全部通过" : "\(failures) 项失败")
+    return failures == 0 ? 0 : 1
+}
+
 let args = CommandLine.arguments
 
 if args.contains("--help") {
@@ -385,8 +436,14 @@ if args.contains("--help") {
       WorkdayWidget --log-dump      打印已记录的工时
       WorkdayWidget --reminder-selftest
                                     校验提醒的触发规则，失败时返回非 0
+      WorkdayWidget --timepicker-selftest
+                                    校验时间下拉框的档位与取值，失败时返回非 0
     """)
     exit(0)
+}
+
+if args.contains("--timepicker-selftest") {
+    exit(runTimePickerSelfTest())
 }
 
 if args.contains("--reminder-selftest") {

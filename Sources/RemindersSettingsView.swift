@@ -157,14 +157,7 @@ struct ReminderEditor: View {
             }
 
             if reminder.time != nil || !reminder.kind.followsScheduleByDefault {
-                DatePicker(
-                    "",
-                    selection: timeBinding,
-                    displayedComponents: .hourAndMinute
-                )
-                .labelsHidden()
-                .datePickerStyle(.field)
-                .frame(width: 92)
+                TimePopupField(minutes: timeBinding)
             } else {
                 Text(TimeFormat.minutes(reminder.effectiveTime(settings) ?? settings.workStart))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -188,12 +181,10 @@ struct ReminderEditor: View {
         )
     }
 
-    private var timeBinding: Binding<Date> {
+    private var timeBinding: Binding<Int> {
         Binding(
-            get: {
-                TimeFormat.date(minutes: reminder.effectiveTime(settings) ?? settings.workStart)
-            },
-            set: { reminder.time = TimeFormat.minutes(from: $0) }
+            get: { reminder.effectiveTime(settings) ?? settings.workStart },
+            set: { reminder.time = $0 }
         )
     }
 

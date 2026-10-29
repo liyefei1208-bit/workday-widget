@@ -274,7 +274,7 @@ workday-widget/
 - 应用图标：`Sources/AppIconView.swift` 渲染，构建时生成 `AppIcon.icns`。
 - 桌面组件底部水印：`yefei.li`（低对比度，不干扰读数）。
 - 设置面板「关于」：应用图标、版本号、作者 `yefei.li`、版权行。
-- 菜单栏菜单底部：`工作日 1.1.0 · 作者 yefei.li`（不可点击）。
+- 菜单栏菜单底部：`工作日 1.1.1 · 作者 yefei.li`（不可点击）。
 - `Info.plist`：`NSHumanReadableCopyright = © 2026 yefei.li`。
 
 ## 说明

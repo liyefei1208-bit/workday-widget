@@ -129,21 +129,10 @@ struct SettingsView: View {
         }
     }
 
+    /// `trailingGap` keeps the field off the row's right edge; without it the
+    /// drop-down sits flush against the section border.
     private func timeField(_ value: Binding<Int>) -> some View {
-        DatePicker(
-            "",
-            selection: dateBinding(value),
-            displayedComponents: .hourAndMinute
-        )
-        .labelsHidden()
-        .datePickerStyle(.field)
-        .frame(width: 92)
-    }
-
-    private func dateBinding(_ value: Binding<Int>) -> Binding<Date> {
-        Binding(
-            get: { TimeFormat.date(minutes: value.wrappedValue) },
-            set: { value.wrappedValue = TimeFormat.minutes(from: $0) }
-        )
+        TimePopupField(minutes: value)
+            .padding(.trailing, 16)
     }
 }
