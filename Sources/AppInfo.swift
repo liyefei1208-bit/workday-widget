@@ -7,11 +7,11 @@ enum AppInfo {
     static let displayName = "工作日"
 
     static var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.1"
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.1.2"
     }
 
     static var build: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "3"
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "4"
     }
 
     static var copyright: String {

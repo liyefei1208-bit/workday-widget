@@ -420,6 +420,74 @@ func runTimePickerSelfTest() -> Int32 {
     return failures == 0 ? 0 : 1
 }
 
+/// Regression test for the input-method bug: a re-render must never rewrite a
+/// text field that is mid-composition, or the marked text (the pinyin being
+/// typed) is cancelled before it can be committed.
+func runIMESelfTest() -> Int32 {
+    var failures = 0
+
+    func check(_ label: String, _ ok: Bool, _ detail: @autoclosure () -> String = "") {
+        if ok {
+            print("  ok   \(label)")
+        } else {
+            failures += 1
+            print("  FAIL \(label)\(detail().isEmpty ? "" : "  (\(detail()))")")
+        }
+    }
+
+    _ = NSApplication.shared
+    NSApp.setActivationPolicy(.accessory)
+
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 400, height: 120),
+        styleMask: [.titled],
+        backing: .buffered,
+        defer: false
+    )
+    let field = NSTextField(frame: NSRect(x: 12, y: 48, width: 300, height: 24))
+    window.contentView?.addSubview(field)
+    window.makeKeyAndOrderFront(nil)
+
+    guard window.makeFirstResponder(field), let editor = field.currentEditor() as? NSTextView else {
+        print("  FAIL 无法取得字段编辑器，跳过（无图形会话）")
+        return 1
+    }
+
+    // Start a composition the way an input method does.
+    editor.setMarkedText(
+        "zhong",
+        selectedRange: NSRange(location: 5, length: 0),
+        replacementRange: NSRange(location: NSNotFound, length: 0)
+    )
+    check("组合已开始", editor.hasMarkedText())
+    check("字段里是组合中的拼音", field.stringValue.contains("zhong"), field.stringValue)
+
+    // The production sync path — this is what updateNSView calls.
+    LeftAlignedField.sync(field, to: "已提交的值")
+
+    check("组合中未被改写", editor.hasMarkedText())
+    check("组合文本仍在", field.stringValue.contains("zhong"), field.stringValue)
+
+    // Commit the composition, the way the input method does.
+    editor.insertText("中", replacementRange: NSRange(location: NSNotFound, length: 0))
+    check("提交后组合结束", !editor.hasMarkedText())
+    check("提交的内容已写入字段", field.stringValue.contains("中"), field.stringValue)
+
+    // Still editing: an external change must wait rather than fight the caret.
+    LeftAlignedField.sync(field, to: "外部值")
+    check("编辑中不覆盖用户输入", field.stringValue != "外部值", field.stringValue)
+
+    // Editing ends; now the binding wins.
+    window.makeFirstResponder(nil)
+    LeftAlignedField.sync(field, to: "外部值")
+    check("结束编辑后同步外部值", field.stringValue == "外部值", field.stringValue)
+
+    window.close()
+
+    print(failures == 0 ? "全部通过" : "\(failures) 项失败")
+    return failures == 0 ? 0 : 1
+}
+
 let args = CommandLine.arguments
 
 if args.contains("--help") {
@@ -438,8 +506,13 @@ if args.contains("--help") {
                                     校验提醒的触发规则，失败时返回非 0
       WorkdayWidget --timepicker-selftest
                                     校验时间下拉框的档位与取值，失败时返回非 0
+      WorkdayWidget --ime-selftest  校验输入法组合期间不被改写，失败时返回非 0
     """)
     exit(0)
+}
+
+if args.contains("--ime-selftest") {
+    exit(runIMESelfTest())
 }
 
 if args.contains("--timepicker-selftest") {

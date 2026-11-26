@@ -77,10 +77,27 @@ struct LeftAlignedField: NSViewRepresentable {
     }
 
     func updateNSView(_ field: NSTextField, context: Context) {
-        if field.stringValue != text {
-            field.stringValue = text
-        }
+        context.coordinator.parent = self
         field.alignment = .left
+        Self.sync(field, to: text)
+    }
+
+    /// Applies `text` to `field`, unless the user is editing it.
+    ///
+    /// While the field has a field editor it owns its text. Assigning
+    /// `stringValue` cancels an in-progress input-method composition, and this
+    /// view is re-evaluated once a second by the app's clock — so writing here
+    /// would wipe the marked text mid-word, every second, and Chinese input
+    /// could never be completed. The same applies to any programmatic update
+    /// while the caret is in the field; it lands when editing ends.
+    ///
+    /// Returns whether the text was written.
+    @discardableResult
+    static func sync(_ field: NSTextField, to text: String) -> Bool {
+        guard field.currentEditor() == nil else { return false }
+        guard field.stringValue != text else { return false }
+        field.stringValue = text
+        return true
     }
 
     func makeCoordinator() -> Coordinator {
@@ -88,7 +105,9 @@ struct LeftAlignedField: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
-        private let parent: LeftAlignedField
+        /// Refreshed on every update: the binding must point at the reminder
+        /// this row currently shows, not the one it showed when it was created.
+        var parent: LeftAlignedField
 
         init(_ parent: LeftAlignedField) {
             self.parent = parent
@@ -96,7 +115,15 @@ struct LeftAlignedField: NSViewRepresentable {
 
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
-            parent.text = field.stringValue
+
+            // Only committed text goes into the model. Pushing the marked text
+            // of an in-progress composition would persist half-typed pinyin
+            // and re-render the row on every keystroke.
+            if let editor = field.currentEditor() as? NSTextView, editor.hasMarkedText() { return }
+
+            if parent.text != field.stringValue {
+                parent.text = field.stringValue
+            }
         }
     }
 }
